@@ -6,6 +6,7 @@ from ray.experimental.util.types import Device
 if TYPE_CHECKING:
     import numpy as np
     import torch
+    from tensordict import TensorDict
 
 
 _TORCH_WARNING_FILTER_ACTIVATE = True
@@ -19,7 +20,7 @@ class _SerializationContext:
         # If _use_external_transport is True, then these are
         # the tensors that should be sent or received
         # out-of-band, through the external transport.
-        self._out_of_band_tensors: List["torch.Tensor"] = []
+        self._out_of_band_tensors: List[Union["torch.Tensor", "TensorDict"]] = []
         # During serialization, tensors sent out-of-band are replaced with
         # integer placeholders. This tracks the set of placeholders seen.
         self._deserialized_tensor_placeholders: Set[int] = set()
@@ -79,8 +80,8 @@ class _SerializationContext:
         return self._use_external_transport
 
     def reset_out_of_band_tensors(
-        self, tensors: List["torch.Tensor"]
-    ) -> Tuple[List["torch.Tensor"], Set[int]]:
+        self, tensors: List[Union["torch.Tensor", "TensorDict"]]
+    ) -> Tuple[List[Union["torch.Tensor", "TensorDict"]], Set[int]]:
         """
         Return and reset the out-of-band tensors and all tensor placeholders
         that were deserialized since the last call to reset.
@@ -92,8 +93,8 @@ class _SerializationContext:
         return prev_tensors, deserialized_tensor_placeholders
 
     def serialize_tensor(
-        self, tensor: "torch.Tensor"
-    ) -> Union[int, Tuple["np.ndarray", "torch.dtype", str]]:
+        self, tensor: Union["torch.Tensor", "TensorDict"]
+    ) -> Union[int, Tuple["np.ndarray", "torch.dtype", str], "TensorDict"]:
         from ray.experimental.channel import ChannelContext
 
         ctx = ChannelContext.get_current()
@@ -105,7 +106,10 @@ class _SerializationContext:
             self._out_of_band_tensors.append(tensor)
             # Return a placeholder.
             return len(self._out_of_band_tensors) - 1
-
+        if TYPE_CHECKING:
+            assert not isinstance(
+                tensor, TensorDict
+            ), "TensorDict does not support serialization yet."
         return self.serialize_to_numpy_or_scalar(tensor)
 
     def serialize_to_numpy_or_scalar(

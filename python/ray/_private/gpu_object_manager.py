@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 import ray
 from ray._private.custom_types import TensorTransportEnum
@@ -12,6 +12,7 @@ util = None
 
 if TYPE_CHECKING:
     import torch
+    from tensordict import TensorDict
 
     from ray._private import gpu_object_manager_util as util
 
@@ -43,17 +44,21 @@ class GPUObjectManager:
         # A dictionary that maps from an object ID to a list of tensors.
         #
         # Note: Currently, `gpu_object_store` is only supported for Ray Actors.
-        self.gpu_object_store: Dict[str, List["torch.Tensor"]] = {}
+        self.gpu_object_store: Dict[str, List[Union["torch.Tensor", "TensorDict"]]] = {}
         # A dictionary that maps from owned object's ID to GPUObjectMeta.
         self.managed_gpu_object_metadata: Dict[str, GPUObjectMeta] = {}
 
     def has_gpu_object(self, obj_id: str) -> bool:
         return obj_id in self.gpu_object_store
 
-    def get_gpu_object(self, obj_id: str) -> Optional[List["torch.Tensor"]]:
+    def get_gpu_object(
+        self, obj_id: str
+    ) -> Optional[List[Union["torch.Tensor", "TensorDict"]]]:
         return self.gpu_object_store[obj_id]
 
-    def add_gpu_object(self, obj_id: str, gpu_object: List["torch.Tensor"]):
+    def add_gpu_object(
+        self, obj_id: str, gpu_object: List[Union["torch.Tensor", "TensorDict"]]
+    ):
         self.gpu_object_store[obj_id] = gpu_object
 
     def remove_gpu_object(self, obj_id: str):
