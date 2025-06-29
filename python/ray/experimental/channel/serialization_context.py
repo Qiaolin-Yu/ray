@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     import numpy as np
     import torch
     from tensordict import TensorDict
+    from collections import OrderedDict
 
 
 _TORCH_WARNING_FILTER_ACTIVATE = True
@@ -24,6 +25,8 @@ class _SerializationContext:
         # During serialization, tensors sent out-of-band are replaced with
         # integer placeholders. This tracks the set of placeholders seen.
         self._deserialized_tensor_placeholders: Set[int] = set()
+
+        self.deserialized_tensordicts: List["TensorDict"] = []
 
         # Buffer for transferring data between tasks in the same worker process.
         # The key is the channel ID, and the value is the data. We don't use a
@@ -93,16 +96,18 @@ class _SerializationContext:
         return prev_tensors, deserialized_tensor_placeholders
 
     def serialize_tensor(
-        self, tensor: Union["torch.Tensor", "TensorDict"]
+        self, tensor: "torch.Tensor"
     ) -> Union[int, Tuple["np.ndarray", "torch.dtype", str], "TensorDict"]:
         from ray.experimental.channel import ChannelContext
 
         ctx = ChannelContext.get_current()
+        print("serialize_tensor: ", tensor, flush=True)
         if self._use_external_transport and tensor.device == ctx.torch_device:
             # External transport is enabled and we found a tensor that matches
             # our device.  Add the actual tensor to a buffer. The buffer of
             # tensors should later be popped by the caller and sent via
             # external transport.
+            print("_out_of_band_tensors append: ", tensor, flush=True)
             self._out_of_band_tensors.append(tensor)
             # Return a placeholder.
             return len(self._out_of_band_tensors) - 1
@@ -111,6 +116,28 @@ class _SerializationContext:
                 tensor, TensorDict
             ), "TensorDict does not support serialization yet."
         return self.serialize_to_numpy_or_scalar(tensor)
+
+    def serialize_tensordict(
+        self, tensordict: "TensorDict"
+    ) -> Union[int, "OrderedDict[str, Any]"]:
+        from ray.experimental.channel import ChannelContext
+
+        print("serialize_tensordict: ", tensordict, flush=True)
+        ctx = ChannelContext.get_current()
+        # print("serialize_tensordict: ", tensordict, flush=True)
+        if self._use_external_transport and tensordict.device == ctx.torch_device:
+            # External transport is enabled and we found a tensor that matches
+            # our device.  Add the actual tensor to a buffer. The buffer of
+            # tensors should later be popped by the caller and sent via
+            # external transport.
+            print("_out_of_band_tensors append: ", tensordict, flush=True)
+            self._out_of_band_tensors.append(tensordict)
+            # Return a placeholder.
+            return len(self._out_of_band_tensors) - 1
+        if tensordict.device != Device.CPU:
+            print("tensordict device", tensordict.device, flush=True)
+            tensordict = tensordict.to("cpu")
+        return tensordict.state_dict()
 
     def serialize_to_numpy_or_scalar(
         self, tensor: "torch.Tensor"
@@ -163,6 +190,24 @@ class _SerializationContext:
         return self.deserialize_from_numpy_or_scalar(
             np_array, dtype, tensor_device_type, target_device
         )
+
+    def deserialize_tensordict(
+        self,
+        val: Union["OrderedDict[str, Any]", int],
+        target_device: Device,
+    ):
+        # Found a placeholder for a tensor that was serialized via NCCL.
+        # Replace it with the corresponding deserialized tensor.
+        if isinstance(val, int):
+            placeholder = val
+            self._deserialized_tensor_placeholders.add(placeholder)
+            assert placeholder < len(self._out_of_band_tensors)
+            tensordict = self._out_of_band_tensors[placeholder]
+        else:
+            tensordict = val
+        if target_device == Device.CPU:
+            tensordict = TensorDict.empty().load_state_dict(val)
+        return tensordict
 
     def deserialize_from_numpy_or_scalar(
         self,

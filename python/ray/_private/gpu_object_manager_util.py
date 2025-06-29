@@ -70,6 +70,9 @@ def __ray_recv__(
     """Helper function that runs on the dst actor to receive tensors from the src actor."""
     from ray._private.worker import global_worker
 
+    print(
+        "__ray_recv__: ", communicator_name, obj_id, src_rank, tensor_meta, flush=True
+    )
     backend = collective.get_group_handle(communicator_name).backend()
     device = COLLECTIVE_BACKEND_TO_TORCH_DEVICE[backend]
 

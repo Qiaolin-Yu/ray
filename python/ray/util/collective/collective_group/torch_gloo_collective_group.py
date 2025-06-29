@@ -1,6 +1,7 @@
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Union
 import os
 import torch
+from tensordict import TensorDict
 import torch.distributed as dist
 
 import ray.experimental.internal_kv as internal_kv
@@ -76,7 +77,7 @@ class TorchGLOOGroup(BaseGroup):
         """
         assert isinstance(tensor, list) and len(tensor) == 1
         tensor = tensor[0]
-        if not isinstance(tensor, torch.Tensor):
+        if not (isinstance(tensor, torch.Tensor) or isinstance(tensor, TensorDict)):
             raise ValueError(
                 f"torch_gloo group only accepts torch.Tensor types, received {tensor}"
             )
@@ -164,10 +165,24 @@ class TorchGLOOGroup(BaseGroup):
         if output_tensor.data_ptr() != tensor_list[self._rank].data_ptr():
             output_tensor.copy_(tensor_list[self._rank])
 
-    def send(self, tensor: List["torch.Tensor"], send_options: SendOptions) -> None:
+    def send(
+        self,
+        tensor: List[Union["torch.Tensor", "TensorDict"]],
+        send_options: SendOptions,
+    ) -> None:
         tensor = self._check_tensor_input(tensor)
-        dist.send(tensor, dst=send_options.dst_rank)
+        if isinstance(tensor, TensorDict):
+            tensor.isend(send_options.dst_rank)
+        else:
+            dist.send(tensor, dst=send_options.dst_rank)
 
-    def recv(self, tensor: List["torch.Tensor"], recv_options: RecvOptions) -> None:
+    def recv(
+        self,
+        tensor: List[Union["torch.Tensor", "TensorDict"]],
+        recv_options: RecvOptions,
+    ) -> None:
         tensor = self._check_tensor_input(tensor)
-        dist.recv(tensor, src=recv_options.src_rank)
+        if isinstance(tensor, TensorDict):
+            tensor.irecv(recv_options.src_rank)
+        else:
+            dist.recv(tensor, src=recv_options.src_rank)

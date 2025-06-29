@@ -59,6 +59,7 @@ class GPUObjectManager:
     def add_gpu_object(
         self, obj_id: str, gpu_object: List[Union["torch.Tensor", "TensorDict"]]
     ):
+        print("add_gpu_object: ", gpu_object, flush=True)
         self.gpu_object_store[obj_id] = gpu_object
 
     def remove_gpu_object(self, obj_id: str):
@@ -77,6 +78,9 @@ class GPUObjectManager:
                 obj_id
             ), f"obj_id={obj_id} not found in GPU object store"
             tensors = gpu_object_manager.get_gpu_object(obj_id)
+            # if isinstance(tensors, TensorDict):
+            #     # FIXME: This is a hack to support Tensordict.
+            #     return [tensors]
             return [(t.shape, t.dtype) for t in tensors]
 
         return src_actor.__ray_call__.remote(__ray_get_tensor_meta__, obj_id)
@@ -109,6 +113,7 @@ class GPUObjectManager:
             src_actor: The actor that executes the task and that creates the GPU object.
             tensor_transport: The tensor transport protocol to use for the GPU object.
         """
+        print("add_gpu_object_ref: ", obj_ref, flush=True)
         util = _get_or_import_util()
         tensor_transport_backend = util.tensor_transport_to_collective_backend(
             tensor_transport
@@ -210,6 +215,13 @@ class GPUObjectManager:
             from ray.experimental.collective import get_collective_groups
 
             gpu_object_meta = self._get_gpu_object_metadata(arg)
+            print(
+                "gpu_object_meta: ",
+                gpu_object_meta,
+                "gpu_object_meta.tensor_transport_backend: ",
+                gpu_object_meta.tensor_transport_backend,
+                flush=True,
+            )
 
             src_actor = gpu_object_meta.src_actor
             tensor_meta = gpu_object_meta.tensor_meta
@@ -248,6 +260,9 @@ class GPUObjectManager:
                 # be transferred intra-process, so we skip the out-of-band tensor
                 # transfer.
                 continue
+            print(
+                f"send_gpu_object: {arg}, communicator: {communicator.name}", flush=True
+            )
             self._send_gpu_object(communicator.name, src_actor, arg.hex(), dst_rank)
             self._recv_gpu_object(
                 communicator.name, dst_actor, arg.hex(), src_rank, tensor_meta

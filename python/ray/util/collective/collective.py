@@ -4,7 +4,7 @@ import os
 from typing import List
 
 import numpy as np
-
+from tensordict import TensorDict
 import ray
 from ray.util.collective import types
 
@@ -759,10 +759,10 @@ def _check_single_tensor_input(tensor):
     if isinstance(tensor, np.ndarray):
         return
     if types.cupy_available():
-        if isinstance(tensor, types.cp.ndarray):
+        if isinstance(tensor, types.cp.ndarray) or isinstance(tensor, TensorDict):
             return
     if types.torch_available():
-        if isinstance(tensor, types.th.Tensor):
+        if isinstance(tensor, types.th.Tensor) or isinstance(tensor, TensorDict):
             return
     raise RuntimeError(
         "Unrecognized tensor type '{}'. Supported types are: "
