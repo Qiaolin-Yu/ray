@@ -2,6 +2,7 @@ import sys
 import torch
 import pytest
 import ray
+import time
 
 
 @ray.remote(num_gpus=1, num_cpus=0, enable_tensor_transport=True)
@@ -13,6 +14,15 @@ class GPUTestActor:
     def sum(self, data, device):
         assert data.device.type == device
         return data.sum().item()
+
+    def produce(self, data):
+        ref = ray.put(data, tensor_transport="nixl")
+        return ref
+
+    def consume(self, ref):
+        tensor = ray.get(ref, tensor_transport="nixl")
+        print(f"actor consume tensor: {tensor}")
+        return tensor[0].sum().item()
 
 
 @pytest.mark.parametrize("ray_start_regular", [{"num_gpus": 2}], indirect=True)
@@ -50,6 +60,19 @@ def test_intra_gpu_tensor_transfer(ray_start_regular):
     ref = actor.echo.remote(tensor, "cuda")
     result = actor.sum.remote(ref, "cuda")
     assert tensor.sum().item() == ray.get(result)
+
+
+@pytest.mark.parametrize("ray_start_regular", [{"num_gpus": 2}], indirect=True)
+def test_put_and_get_object(ray_start_regular):
+    actors = [GPUTestActor.remote() for _ in range(2)]
+    src_actor, dst_actor = actors[0], actors[1]
+    tensor = torch.tensor([1, 2, 3]).to("cuda")
+
+    ref = src_actor.produce.remote(tensor)
+    ref1 = dst_actor.consume.remote(ref)
+    result = ray.get(ref1)
+    assert result == 6
+    time.sleep(10)
 
 
 if __name__ == "__main__":

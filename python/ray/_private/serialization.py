@@ -162,16 +162,6 @@ class SerializationContext:
             worker = ray._private.worker.global_worker
             worker.check_connected()
 
-            # Check if this is a GPU ObjectRef being serialized inside a collection
-            if (
-                self.is_in_band_serialization()
-                and worker.gpu_object_manager.is_managed_object(obj.hex())
-            ):
-                raise ValueError(
-                    "Passing GPU ObjectRefs inside data structures is not yet supported. "
-                    "Pass GPU ObjectRefs directly as task arguments instead. For example, use `foo.remote(ref)` instead of `foo.remote([ref])`."
-                )
-
             self.add_contained_object_ref(
                 obj,
                 allow_out_of_band_serialization=(
@@ -623,24 +613,19 @@ class SerializationContext:
             metadata, msgpack_data, contained_object_refs, pickle5_serialized_object
         )
 
-    def serialize_and_store_gpu_objects(
+    def serialize_gpu_objects(
         self,
         value: Any,
-        obj_id: bytes,
-    ) -> MessagePackSerializedObject:
+    ) -> Tuple[MessagePackSerializedObject, List["torch.Tensor"]]:
         """Retrieve GPU data from `value` and store it in the GPU object store. Then, return the serialized value.
 
         Args:
             value: The value to serialize.
-            obj_id: The object ID of the value. `obj_id` is required, and the GPU data (e.g. tensors) in `value`
-                will be stored in the GPU object store with the key `obj_id`.
 
         Returns:
             Serialized value.
         """
-        assert (
-            obj_id is not None
-        ), "`obj_id` is required, and it is the key to retrieve corresponding tensors from the GPU object store."
+
         if not self._torch_custom_serializer_registered:
             # Register a custom serializer for torch.Tensor. If the method is
             # decorated with `@ray.method(tensor_transport="xxx")`, it will
@@ -653,15 +638,27 @@ class SerializationContext:
             self._torch_custom_serializer_registered = True
 
         serialized_val, tensors = self._serialize_and_retrieve_tensors(value)
+
+        return serialized_val, tensors
+
+    def store_gpu_objects(self, obj_id: str, tensors: List["torch.Tensor"]):
+        """
+        Store GPU objects in the GPU object store.
+
+        Args:
+            obj_id: The object ID of the value. `obj_id` is required, and the GPU data (e.g. tensors) in `value`
+                will be stored in the GPU object store with the key `obj_id`.
+            tensors: The tensors to store in the GPU object store.
+        """
+        assert (
+            obj_id is not None
+        ), "`obj_id` is required, and it is the key to retrieve corresponding tensors from the GPU object store."
         # Regardless of whether `tensors` is empty, we always store the GPU object
         # in the GPU object store. This ensures that `_get_tensor_meta` is not
         # blocked indefinitely.
-        obj_id = obj_id.decode("ascii")
         worker = ray._private.worker.global_worker
         gpu_object_manager = worker.gpu_object_manager
         gpu_object_manager.gpu_object_store.add_object(obj_id, tensors, is_primary=True)
-
-        return serialized_val
 
     def serialize(
         self, value: Any
